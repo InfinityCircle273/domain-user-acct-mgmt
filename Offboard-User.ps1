@@ -21,7 +21,7 @@
     Updated:        07/02/2020
     Created:        07/02/2020
     Author:         Zach Choate
-    URL:            https://raw.githubusercontent.com/KSMC-TS/domain-user-acct-mgmt/Offboard-User.ps1
+    URL:            https://raw.githubusercontent.com/KSMC-TS/domain-user-acct-mgmt/main/Offboard-User.ps1
 
 #>
 
