@@ -5,8 +5,8 @@
     - AD account disabled
     - AD account password set to random string
     - Start AD Sync
-    - Connect to Exchange Online (v2)
     - Connect to Azure AD
+    - Connect to Exchange Online (v2)
     - Remove from distros and O365 groups
     - Convert mailbox to shared
     - Block sign-in on AAD
@@ -17,8 +17,8 @@
     - ExchangeOnlineManagement (Install-Module ExchangeOnlineManagement -Force)
     - AzureAD (Install-Module AzureAD -Force)
 
-    Version:        0.1
-    Updated:        07/02/2020
+    Version:        0.2
+    Updated:        07/22/2020
     Created:        07/02/2020
     Author:         Zach Choate
     URL:            https://raw.githubusercontent.com/KSMC-TS/domain-user-acct-mgmt/main/Offboard-User.ps1
@@ -93,6 +93,86 @@ function Get-RandomString {
 
 }
 
+function Disable-UserAccount {
+
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$username,
+        [Parameter(Mandatory=$true)]
+        [string]$pswd
+    )
+    # Disable the AD account and change the password.
+    Set-ADUser -Identity $userName -Enabled $false
+    Set-ADAccountPassword -Identity $userName -Reset -NewPassword $($pswd | ConvertTo-SecureString -AsPlainText -Force)
+
+    # Import ADSync module to get ADSync configuration
+    Import-Module ADSync
+
+    # Get ADSync group if applicable
+    $adSyncGroup = Get-ADGroup $(((Get-ADSyncConnector).GlobalParameters | Where-Object {$_.name -eq "Connector.GroupFilteringGroupDn"} | Select-Object Value).value) -ErrorAction Ignore
+
+    # Get user's primary group
+    $primaryGroup = (Get-ADUser -Identity $userName -Properties PrimaryGroup | Select-Object PrimaryGroup).PrimaryGroup
+
+    # Get the groups the user is a member of filtering out the AD Sync and user's primary group.
+    $groups = Get-ADPrincipalGroupMembership -Identity $userName | Where-Object {$_.distinguishedName -ne $adSyncGroup.DistinguishedName -and $_.distinguishedName -ne $primaryGroup}
+
+    # Start removing those groups from the user.
+    ForEach($group in $groups) {
+        Remove-ADGroupMember -Identity $group.DistinguishedName -Members $userName
+    }
+    Stop-ADSyncSyncCycle
+    Start-Sleep -Seconds 2
+    Start-ADSyncSyncCycle -PolicyType Delta
+}
+
+# Check for dependencies
+$aadModule = Get-Module -Name AzureAD -ListAvailable
+$exoModule = Get-Module -Name ExchangeOnlineManagement -ListAvailable
+$adsyncModule = Get-Module -Name ADSync -ListAvailable
+$adModule = Get-Module -Name ActiveDirectory -ListAvailable
+Clear-Host
+Write-Host "================ Offboard a User ================"
+If(!$adsyncModule) {
+    Write-Host "Looks like the AD Sync module isn't installed. Ensure you're running this on a server with AD Sync installed."
+}
+If(!$adModule) {
+    Write-Host "Looks like the ActiveDirectory module isn't installed. Ensure you're running this on a server with the AD management tools installed."
+}
+If(!$aadModule) {
+    While(($aadConfirm = Read-Host "Looks like the AzureAD module isn't installed. Would you like to install the module? Note: This will open a new session as an administrator. [y/n]") -notmatch '^Y$|^N$'){}
+    If($aadConfirm -ne "y") {
+        Write-Host "Okay, aborting..."
+    } else {
+        $aadArgs = "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Install-Module AzureAD -Force"
+        Start-Process powershell -Verb RunAs -ArgumentList "-command $aadArgs" -Wait
+        Write-Host "Looks like we have the Azure AD module installed now. Let's verify that ExchangeOnlineManagement is installed. Then we'll restart."
+    }
+}
+If(!$exoModule) {
+    While(($exoConfirm = Read-Host "Looks like the ExchangeOnlineManagement module isn't installed. Would you like to install the module? Note: This will open a new session as an administrator. [y/n]") -notmatch '^Y$|^N$'){}
+    If($exoConfirm -ne "y") {
+        Write-Host "Okay, aborting..."
+    } else {
+        $exoArgs = "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Install-Module ExchangeOnlineManagement -Force"
+        Start-Process powershell -Verb RunAs -ArgumentList "-command $exoArgs" -Wait
+        Write-Host "Looks like we have the ExchangeOnlineManagement module installed now."
+    }
+}
+
+If($aadConfirm -eq "y" -or $exoConfirm -eq "y") {
+    Clear-Host
+    Write-Host "Let's restart the script. We'll verify the modules are installed. If you have an issue again, try manually installing the modules and starting the script again."
+    Pause
+    Start-Process powershell -Verb RunAs -ArgumentList "-ExecutionPolicy Bypass -File $PSCommandPath"
+    Exit
+} elseif (!$adsyncModule -or !$adModule -or !$aadModule -or !$exoModule) {
+    Write-Host "Exiting since dependencies were not met..."
+    Pause
+    Exit
+}
+
 # Search for user based on their name, email, UPN, or SAM
 $searchBy = New-OptionList -Title "Search for user by" -optionsList "name", "mail", "userprincipalname","samaccountname" -message "to search by"
 Clear-Host
@@ -143,24 +223,20 @@ Clear-Host
 $passString = Get-RandomString
 $disableResetJob = Start-Job -ScriptBlock {
     Try {
-        Set-ADUser -Identity $args[0] -Enabled $false
-        Set-ADAccountPassword -Identity $args[0] -Reset -NewPassword $($args[1] | ConvertTo-SecureString -AsPlainText -Force)
-        Import-Module ADSync
-        Stop-ADSyncSyncCycle
-        Start-ADSyncSyncCycle -PolicyType Delta
+        Disable-UserAccount -UserName $arg[0] -pswd $arg[1]
     } catch {
         $disableError = $true
     }
     $disableError
 } -ArgumentList $($user.DistinguishedName), $passString
-Write-Host "Disabling $($user.Name) and resetting password..."
+Write-Host "Disabling $($user.Name),resetting password, removing groups and syncing to Azure AD..."
 Clear-Host
 $disableError = Receive-Job -Job $disableResetJob
 If($disableError) {
-    Write-Host "Disabling $($user.Name) and resetting password appears to have failed. Further investigation required."
+    Write-Host "Disabling $($user.Name),resetting the password, removing groups, and/or syncing to Azure AD appears to have failed. Further investigation required."
     Pause
 } else {
-    Write-Host "Disabled $($user.Name) and reset password successfully.`nMoving to the next step..."
+    Write-Host "Disabled $($user.Name), reset password, removed groups and started sync to Azure AD successfully.`nMoving to the next step..."
 }
 
 # Select Office 365 Environment and connect to Exchange Online
@@ -188,12 +264,12 @@ switch ($o365Env) {
     #"DoD" {$connectionUri = "https://webmail.apps.mil/powershell-liveid/"}
 }
 
-Write-Host "`nConnecting to Office 365 and AzureAD..."
+Write-Host "`nConnecting to Azure AD and Exchange Online..."
 
 Import-Module ExchangeOnlineManagement
 Import-Module AzureAD
-Connect-ExchangeOnline -ConnectionUri $connectionUri
-Connect-AzureAD -AzureEnvironmentName $azureEnv
+$aadConnection = Connect-AzureAD -AzureEnvironmentName $azureEnv
+Connect-ExchangeOnline -ConnectionUri $connectionUri -UserPrincipalName $aadConnection.Account.Id
 
 Write-Host "Getting user's Exchange Online details and group memberships. This may take a minute..."
 $userDn = Get-User -Identity $($user.userprincipalname) | Select-Object -ExpandProperty DistinguishedName
@@ -246,5 +322,4 @@ Clear-Host
 Write-Host "All that is left is to remove licenses from billing if required. These are the licenses that were removed: `n$licensesToRemove"
 
 Remove-Job -Job $disableResetJob
-Disconnect-ExchangeOnline
 Disconnect-AzureAD
