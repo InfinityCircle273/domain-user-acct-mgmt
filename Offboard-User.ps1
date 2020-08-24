@@ -17,8 +17,8 @@
     - ExchangeOnlineManagement (Install-Module ExchangeOnlineManagement -Force)
     - AzureAD (Install-Module AzureAD -Force)
 
-    Version:        0.2
-    Updated:        07/22/2020
+    Version:        0.3
+    Updated:        08/24/2020
     Created:        07/02/2020
     Author:         Zach Choate
     URL:            https://raw.githubusercontent.com/KSMC-TS/domain-user-acct-mgmt/main/Offboard-User.ps1
@@ -107,20 +107,24 @@ function Disable-UserAccount {
     Set-ADAccountPassword -Identity $userName -Reset -NewPassword $($pswd | ConvertTo-SecureString -AsPlainText -Force)
 
     # Import ADSync module to get ADSync configuration
-    Import-Module ADSync
+    Try {
+        Import-Module ADSync
+    } catch {
+        Import-Module -Name "$env:ProgramFiles\Microsoft Azure ADSync\Bin\ADSync"
+    }
 
     # Get ADSync group if applicable
-    $adSyncGroup = Get-ADGroup $(((Get-ADSyncConnector).GlobalParameters | Where-Object {$_.name -eq "Connector.GroupFilteringGroupDn"} | Select-Object Value).value) -ErrorAction Ignore
+    $adSyncGroup = ((Get-ADSyncConnector).GlobalParameters | Where-Object {$_.name -eq "Connector.GroupFilteringGroupDn"} | Select-Object Value).value
 
     # Get user's primary group
     $primaryGroup = (Get-ADUser -Identity $userName -Properties PrimaryGroup | Select-Object PrimaryGroup).PrimaryGroup
 
     # Get the groups the user is a member of filtering out the AD Sync and user's primary group.
-    $groups = Get-ADPrincipalGroupMembership -Identity $userName | Where-Object {$_.distinguishedName -ne $adSyncGroup.DistinguishedName -and $_.distinguishedName -ne $primaryGroup}
+    $groups = Get-ADPrincipalGroupMembership -Identity $userName | Where-Object {$_.distinguishedName -ne $adSyncGroup -and $_.distinguishedName -ne $primaryGroup}
 
     # Start removing those groups from the user.
     ForEach($group in $groups) {
-        Remove-ADGroupMember -Identity $group.DistinguishedName -Members $userName
+        Remove-ADGroupMember -Identity $group.DistinguishedName -Members $userName -Confirm:$false
     }
     Stop-ADSyncSyncCycle
     Start-Sleep -Seconds 2
@@ -221,19 +225,15 @@ If($confirm -ne "y") {
 # Start disabling user, resetting password and syncing to Azure AD.
 Clear-Host
 $passString = Get-RandomString
-$disableResetJob = Start-Job -ScriptBlock {
-    Try {
-        Disable-UserAccount -UserName $arg[0] -pswd $arg[1]
-    } catch {
-        $disableError = $true
-    }
-    $disableError
-} -ArgumentList $($user.DistinguishedName), $passString
+Try {
+    Disable-UserAccount -UserName $user.DistinguishedName -pswd $passString
+} catch {
+    $disableError = $_.Exception.Message
+}
 Write-Host "Disabling $($user.Name),resetting password, removing groups and syncing to Azure AD..."
 Clear-Host
-$disableError = Receive-Job -Job $disableResetJob
 If($disableError) {
-    Write-Host "Disabling $($user.Name),resetting the password, removing groups, and/or syncing to Azure AD appears to have failed. Further investigation required."
+    Write-Host "Disabling $($user.Name),resetting the password, removing groups, and/or syncing to Azure AD appears to have failed. Further investigation required. $disableError"
     Pause
 } else {
     Write-Host "Disabled $($user.Name), reset password, removed groups and started sync to Azure AD successfully.`nMoving to the next step..."
@@ -321,5 +321,4 @@ Write-Host "The following license SKUs were removed from $($user.Name): `n$(ForE
 Clear-Host
 Write-Host "All that is left is to remove licenses from billing if required. These are the licenses that were removed: `n$licensesToRemove"
 
-Remove-Job -Job $disableResetJob
 Disconnect-AzureAD
