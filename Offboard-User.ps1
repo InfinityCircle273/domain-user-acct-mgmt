@@ -4,6 +4,7 @@
     Interactive script for user offboarding in an AD/AAD-synced environment.
     - AD account disabled
     - AD account password set to random string
+    - Search for a specific OU and move user to OU if desired
     - Start AD Sync
     - Connect to Azure AD
     - Connect to Exchange Online (v2)
@@ -17,7 +18,7 @@
     - ExchangeOnlineManagement (Install-Module ExchangeOnlineManagement -Force)
     - AzureAD (Install-Module AzureAD -Force)
 
-    Version:        0.4
+    Version:        0.6.1
     Updated:        08/26/2020
     Created:        07/02/2020
     Author:         Zach Choate
@@ -100,7 +101,9 @@ function Disable-UserAccount {
         [Parameter(Mandatory=$true)]
         [string]$username,
         [Parameter(Mandatory=$true)]
-        [string]$pswd
+        [string]$pswd,
+        [Parameter()]
+        [string]$newOU
     )
     # Disable the AD account and change the password.
     Set-ADUser -Identity $userName -Enabled $false
@@ -123,9 +126,16 @@ function Disable-UserAccount {
     $groups = Get-ADPrincipalGroupMembership -Identity $userName | Where-Object {$_.distinguishedName -ne $adSyncGroup -and $_.distinguishedName -ne $primaryGroup}
 
     # Start removing those groups from the user.
-    ForEach($group in $groups) {
-        Remove-ADGroupMember -Identity $group.DistinguishedName -Members $userName -Confirm:$false
+    If($groups) {
+        ForEach($group in $groups) {
+            Remove-ADGroupMember -Identity $group.DistinguishedName -Members $userName -Confirm:$false
+        }
     }
+
+    If($newOu) {
+        Move-ADObject -Identity $(Get-ADUser $username) -TargetPath $newOU
+    }
+
     Stop-ADSyncSyncCycle
     Start-Sleep -Seconds 2
     Start-ADSyncSyncCycle -PolicyType Delta
@@ -222,11 +232,55 @@ If($confirm -ne "y") {
     Exit
 }
 
+Clear-Host
+# Prompt admin if user should be moved to another OU
+While(($confirm = Read-Host "Do you want to move the user to another OU? [y/n]") -notmatch '^Y$|^N$'){}
+If($confirm -eq "y") {
+    $moveOU = $true
+} else {
+    $moveOU = $false
+}
+
+If($moveOU) { 
+    
+    Clear-Host
+    $searchOU = Read-Host "Search for the OU to move the user to"
+    $returnOUs = Get-ADOrganizationalUnit -Filter "Name -like `"*$searchOU*`""
+    Clear-Host
+    If($returnOUs.Count -gt 1) {
+        Write-Host "It looks like the search returned multiple OUs. Please select from the list below: `n"
+        $n = 1
+        ForEach($returnOU in $returnOUs) {
+            Write-Host "$n`: Press `'$n`' to select $($returnOU.Name) with a Distinguished Name of $($returnOU.DistinguishedName)."
+            $n++
+        }
+        $optionSelected = Read-Host "`nPlease make a selection"
+        $optionSelected = $optionSelected-1
+        $returnOU = $returnOUs[$optionSelected]
+    } elseif ($returnOUs) {
+        Write-Host "Your search yielded the following $($returnOU.Name) with a Distinguished Name of $($returnOU.DistinguishedName)."
+        $returnOU = $returnOUs
+    }
+    Clear-Host
+    While(($confirm = Read-Host "Are you sure you want to move the disabled user to the OU: $($returnOU.Name)? [y/n]") -notmatch '^Y$|^N$'){}
+    If($confirm -ne "y") {
+        Write-Host "Okay, aborting..."
+        Exit
+    }
+}
+
 # Start disabling user, resetting password and syncing to Azure AD.
 Clear-Host
 $passString = Get-RandomString
+
+# Build hashtable for values set
+$disableParams = @{
+    username    = $user.DistinguishedName
+    pswd        = $passString
+    newOU       = $returnOU.DistinguishedName
+}
 Try {
-    Disable-UserAccount -UserName $user.DistinguishedName -pswd $passString
+    Disable-UserAccount @disableParams
 } catch {
     $disableError = $_.Exception.Message
 }
@@ -329,3 +383,5 @@ Clear-Host
 Write-Host "All that is left is to remove licenses from billing if required. These are the licenses that were removed: `n$licensesToRemove"
 
 Disconnect-AzureAD
+
+$disableError = $null
