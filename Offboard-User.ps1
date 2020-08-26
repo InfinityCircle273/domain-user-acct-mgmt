@@ -18,7 +18,7 @@
     - ExchangeOnlineManagement (Install-Module ExchangeOnlineManagement -Force)
     - AzureAD (Install-Module AzureAD -Force)
 
-    Version:        0.6
+    Version:        0.6.1
     Updated:        08/26/2020
     Created:        07/02/2020
     Author:         Zach Choate
@@ -108,9 +108,6 @@ function Disable-UserAccount {
     # Disable the AD account and change the password.
     Set-ADUser -Identity $userName -Enabled $false
     Set-ADAccountPassword -Identity $userName -Reset -NewPassword $($pswd | ConvertTo-SecureString -AsPlainText -Force)
-    If($newOu) {
-        Move-ADObject -Identity $(Get-ADUser $username) -TargetPath $newOU
-    }
 
     # Import ADSync module to get ADSync configuration
     Try {
@@ -129,9 +126,16 @@ function Disable-UserAccount {
     $groups = Get-ADPrincipalGroupMembership -Identity $userName | Where-Object {$_.distinguishedName -ne $adSyncGroup -and $_.distinguishedName -ne $primaryGroup}
 
     # Start removing those groups from the user.
-    ForEach($group in $groups) {
-        Remove-ADGroupMember -Identity $group.DistinguishedName -Members $userName -Confirm:$false
+    If($groups) {
+        ForEach($group in $groups) {
+            Remove-ADGroupMember -Identity $group.DistinguishedName -Members $userName -Confirm:$false
+        }
     }
+
+    If($newOu) {
+        Move-ADObject -Identity $(Get-ADUser $username) -TargetPath $newOU
+    }
+
     Stop-ADSyncSyncCycle
     Start-Sleep -Seconds 2
     Start-ADSyncSyncCycle -PolicyType Delta
@@ -379,3 +383,5 @@ Clear-Host
 Write-Host "All that is left is to remove licenses from billing if required. These are the licenses that were removed: `n$licensesToRemove"
 
 Disconnect-AzureAD
+
+$disableError = $null
