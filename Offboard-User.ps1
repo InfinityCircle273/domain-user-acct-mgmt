@@ -241,7 +241,7 @@ If($disableError) {
 
 # Select Office 365 Environment and connect to Exchange Online
 Clear-Host
-$o365Env = New-OptionList -Title "Select Office 365 Environment" -optionsList "Commerical", "21Vianet", "Germany", "Government Community Cloud High"<#, "DoD"#> -message "for"
+$o365Env = New-OptionList -Title "Select Office 365 Environment - if unsure, select Commercial" -optionsList "Commerical", "21Vianet", "Germany", "Government Community Cloud High"<#, "DoD"#> -message "for"
 Clear-Host
 
 switch ($o365Env) {
@@ -300,23 +300,30 @@ Revoke-AzureADUserAllRefreshToken -ObjectId $aadUser.ObjectId
 Write-Host "Revoked all existing refresh tokens for Azure AD."
 
 # Remove licenses from user
+# Query user to get currently assigned licenses
 $aadUserLicenses = Get-AzureADUser -ObjectId $aadUser.ObjectId | Select-Object -ExpandProperty AssignedLicenses | Select-Object SkuID
+
+# Build license objects
 $license = New-Object -TypeName Microsoft.Open.AzureAD.Model.AssignedLicense
 $licenses = New-Object -TypeName Microsoft.Open.AzureAD.Model.AssignedLicenses
-$license.SkuID = $aadUserLicenses.SkuID
-$licenses.AddLicenses = $license
-Set-AzureAdUserLicense -ObjectId $aadUser.ObjectId -AssignedLicenses $licenses
+
+# Build licenses object to include Skus currently assigned to user
 $licenses.AddLicenses = @()
-$licenses.RemoveLicenses = (Get-AzureADSubscribedSku | Where-Object -Property SkuID -Value $aadUserLicenses.SkuID -EQ).SkuID
+$licenses.RemoveLicenses = $aadUserLicenses.SkuID
+
+# Update the user's licenses
 Set-AzureAdUserLicense -ObjectId $aadUser.ObjectId -AssignedLicenses $licenses
+
+# Let's get some information so we can tell the admin at the end which licenses were removed.
 $licensesRemoved = $licenses.RemoveLicenses -split " "
 $licenseList = Get-AzureADSubscribedSku | Select-Object SkuPartNumber,SkuID
 $licensesToRemove = @()
-Write-Host "The following license SKUs were removed from $($user.Name): `n$(ForEach($sku in $licensesRemoved) {
+Write-Host "The following license SKUs were removed from $($user.Name): `n"
+ForEach($sku in $licensesRemoved) {
     $skuPartNumber = ($licenseList | Where-Object {$_.SkuId -contains $sku}).SkuPartNumber
     Write-Host "$skuPartNumber | $sku"
     $licensesToRemove += $skuPartNumber
-})"
+}
 
 Clear-Host
 Write-Host "All that is left is to remove licenses from billing if required. These are the licenses that were removed: `n$licensesToRemove"
