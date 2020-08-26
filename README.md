@@ -19,10 +19,14 @@ Steps to run:
 4. If you didn't satisify the prerequisites above, you may be prompted to install some additional modules and restart the script.
 5. The first page you should see assuming prerequisites are satisfied should be a **Search for user by** page where you can enter the number of how you'd like to query for the user to disable.
 6. You'll be prompted to search by whichever option you selected. Enter a query and we'll return a list of users that match your criteria. If only 1 user matches, then we'll confirm we're thinking of the same user.
-7. Once confirmed, we'll disable the user, change passwords, remove from groups except for the users' primary and if ADSync is configured for group based sync, we'll exclude that as well. An ADSync cycle will be kicked off as well.
-8. Next, you'll be prompted to select the Office 365/Azure AD environment - select Commerical unless you are confident you need to connect to another environment. If you need another environment, please create an issue so it can be added.
-9. Sign in with AzureAD/Office 365 credentials.
-10. You should see that the user will be removed from Exchange Online only distribution groups, mailbox converted to a shared mailbox, AAD tokens are revoked, and licenses are removed from the user.
-11. Once completed, you should get a list of licenses that can be reclaimed.
+7. You'll be prompted if you'd like to change the user's OU upon disabling. If so then:
+    1. You'll hit Y to confirm.
+    2. Search for the name of the OU. If you are looking for **Disabled Users**, type that in or part of that name like **disable**.
+    3. Any OUs matching the search will be returned. Confirm the OU you would like to move the user to.
+8. Once confirmed, we'll disable the user, change passwords, remove from groups except for the users' primary and if ADSync is configured for group based sync, we'll exclude that as well. If you're moving the user to another OU, that happens right before an ADSync kicks off.
+9. Next, you'll be prompted to select the Office 365/Azure AD environment - select Commerical unless you are confident you need to connect to another environment. If you need another environment, please create an issue so it can be added.
+10. Sign in with AzureAD/Office 365 credentials.
+11. You should see that the user will be removed from Exchange Online only distribution groups, mailbox converted to a shared mailbox, AAD tokens are revoked, and licenses are removed from the user.
+12. Once completed, you should get a list of licenses that can be reclaimed.
 
 ![Offboard-UserDemo](docs/assets/Offboard-UserDemo.gif)
