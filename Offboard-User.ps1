@@ -17,8 +17,8 @@
     - ExchangeOnlineManagement (Install-Module ExchangeOnlineManagement -Force)
     - AzureAD (Install-Module AzureAD -Force)
 
-    Version:        0.3
-    Updated:        08/24/2020
+    Version:        0.4
+    Updated:        08/26/2020
     Created:        07/02/2020
     Author:         Zach Choate
     URL:            https://raw.githubusercontent.com/KSMC-TS/domain-user-acct-mgmt/main/Offboard-User.ps1
